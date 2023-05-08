@@ -1,0 +1,147 @@
+% Split the data into training and testing sets
+train_size = round(size(Total_in, 1) * 0.8);
+train_in = Total_in(1:train_size, :);
+train_out = Total_out(1:train_size, 1);
+test_in = Total_in(train_size+1:end, :);
+test_out = Total_out(train_size+1:end, 1);
+
+% Train the neural network
+net = feedforwardnet([10 5]); % 2 hidden layers with 10 and 5 neurons, respectively
+net.trainFcn = 'trainlm'; % Levenberg-Marquardt algorithm
+net.trainParam.epochs = 1000; % number of epochs to train for
+net.divideFcn = 'dividerand'; % divide the data randomly into training, validation, and testing sets
+net.divideParam.trainRatio = 0.7; % 70% of the data for training
+net.divideParam.valRatio = 0.15; % 15% of the data for validation
+net.divideParam.testRatio = 0.15; % 15% of the data for testing
+[net, tr] = train(net, train_in', train_out');
+
+% Evaluate the performance of the neural network
+predicted_out_nn = net(test_in');
+mse_nn = mean((test_out' - predicted_out_nn).^2);
+mae_nn = mean(abs(test_out' - predicted_out_nn));
+
+% Train the decision tree
+tree = fitrtree(train_in, train_out);
+% Make predictions on the test data
+predicted_out_tree = predict(tree, test_in);
+% Evaluate the performance of the decision tree
+mse_tree = mean((test_out - predicted_out_tree).^2);
+mae_tree = mean(abs(test_out - predicted_out_tree));
+
+% Combine the predictions
+predicted_out_combined = [predicted_out_nn', predicted_out_tree];
+
+% Bagging Ensemble
+ens_bagging = fitensemble(predicted_out_combined, test_out, 'Bag', 200, 'Tree', 'Type', 'Regression');
+predicted_out_bagging = predict(ens_bagging, predicted_out_combined);
+mse_bagging = mean((test_out - predicted_out_bagging).^2);
+mae_bagging = mean(abs(test_out - predicted_out_bagging));
+
+% Boosting Ensemble
+ens_boosting = fitensemble(predicted_out_combined, test_out, 'LSBoost', 200, 'Tree', 'Type', 'Regression');
+predicted_out_boosting = predict(ens_boosting, predicted_out_combined);
+mse_boosting = mean((test_out - predicted_out_boosting).^2);
+mae_boosting = mean(abs(test_out - predicted_out_boosting));
+
+% Weighted Average Ensemble
+wa_ens = (predicted_out_nn' * 0.5) + (predicted_out_tree * 0.2) + (predicted_out_boosting * 0.1) + (predicted_out_bagging * 0.1);
+mse_wa_ens = mean((test_out - wa_ens).^2);
+mae_wa_ens = mean(abs(test_out - wa_ens));
+
+% Combine the predictions into a matrix
+predicted_out_combined = [predicted_out_nn', predicted_out_tree, predicted_out_bagging, predicted_out_boosting];
+
+% Train a linear regression model to combine the predictions
+stacked_model = fitlm(predicted_out_combined, test_out);
+predicted_out_stacked = predict(stacked_model, predicted_out_combined);
+mse_stacked = mean((test_out - predicted_out_stacked).^2);
+mae_stacked = mean(abs(test_out - predicted_out_stacked));
+
+% Calculate MAPE
+mape_nn = mean(abs((test_out - predicted_out_nn') ./ test_out)) * 100;
+mape_tree = mean(abs((test_out - predicted_out_tree) ./ test_out)) * 100;
+mape_bagging = mean(abs((test_out - predicted_out_bagging) ./ test_out)) * 100;
+mape_boosting = mean(abs((test_out - predicted_out_boosting) ./ test_out)) * 100;
+mape_wa_ens = mean(abs((test_out - wa_ens) ./ test_out)) * 100;
+mape_stacked = mean(abs((test_out - predicted_out_stacked) ./ test_out)) * 100;
+
+% Display the performance indicators
+fprintf('Neural Network Mean Squared Error: %.6f\n', mse_nn);
+fprintf('Neural Network Mean Absolute Error: %.6f\n', mae_nn);
+fprintf('Neural Network Mean Absolute Percentage Error: %.6f%%\n', mape_nn);
+fprintf('Decision Tree Mean Squared Error: %.6f\n', mse_tree);
+fprintf('Decision Tree Mean Absolute Error: %.6f\n', mae_tree);
+fprintf('Decision Tree Mean Absolute Percentage Error: %.6f%%\n', mape_tree);
+fprintf('Bagging Ensemble Model Mean Squared Error: %.6f\n', mse_bagging);
+fprintf('Bagging Ensemble Model Mean Absolute Error: %.6f\n', mae_bagging);
+fprintf('Bagging Ensemble Model Mean Absolute Percentage Error: %.6f%%\n', mape_bagging);
+fprintf('Boosting Ensemble Model Mean Squared Error: %.6f\n', mse_boosting);
+fprintf('Boosting Ensemble Model Mean Absolute Error: %.6f\n', mae_boosting);
+fprintf('Boosting Ensemble Model Mean Absolute Percentage Error: %.6f%%\n', mape_boosting);
+fprintf('Weighted Average Ensemble Model Mean Squared Error: %.6f\n', mse_wa_ens);
+fprintf('Weighted Average Ensemble Model Mean Absolute Error: %.6f\n', mae_wa_ens);
+fprintf('Weighted Average Ensemble Model Mean Absolute Percentage Error: %.6f%%\n', mape_wa_ens);
+fprintf('Stacked Ensemble Model Mean Squared Error: %.6f\n', mse_stacked);
+fprintf('Stacked Ensemble Model Mean Absolute Error:%.6f\n', mae_stacked);
+fprintf('Stacked Ensemble Model Mean Absolute Percentage Error: %.6f%%\n', mape_stacked);
+
+% Plot the actual and predicted values for the neural network
+figure;
+plot(test_out, 'LineWidth', 2, 'Color', 'blue');
+hold on;
+plot(predicted_out_nn', 'LineWidth', 2, 'Color', 'red');
+xlabel('Sample index');
+ylabel('Target value');
+title('Neural Network: Actual vs. Predicted');
+legend('Actual', 'Predicted');
+
+% Plot the actual and predicted values for the decision tree
+figure;
+plot(test_out, 'LineWidth', 2, 'Color', 'blue');
+hold on;
+plot(predicted_out_tree, 'LineWidth', 2, 'Color', 'green');
+xlabel('Sample index');
+ylabel('Target value');
+title('Decision Tree: Actual vs. Predicted');
+legend('Actual', 'Predicted');
+
+% Plot the actual and predicted values for the bagging ensemble model
+figure;
+plot(test_out, 'LineWidth', 2, 'Color', 'blue');
+hold on;
+plot(predicted_out_bagging, 'LineWidth', 2, 'Color', 'magenta');
+xlabel('Sample index');
+ylabel('Target value');
+title('Bagging Ensemble: Actual vs. Predicted');
+legend('Actual', 'Predicted');
+
+% Plot the actual and predicted values for the boosting ensemble model
+figure;
+plot(test_out, 'LineWidth', 2, 'Color', 'blue');
+hold on;
+plot(predicted_out_boosting, 'LineWidth', 2, 'Color', 'black');
+xlabel('Sample index');
+ylabel('Target value');
+title('Boosting Ensemble: Actual vs. Predicted');
+legend('Actual', 'Predicted');
+
+% Plot the actual and predicted values for the weighted average ensemble model
+figure;
+plot(test_out, 'LineWidth', 2, 'Color', 'blue');
+hold on;
+plot(wa_ens, 'LineWidth', 2, 'Color', 'cyan');
+xlabel('Sample index');
+ylabel('Target value');
+title('Weighted Average Ensemble: Actual vs. Predicted');
+legend('Actual', 'Predicted');
+
+% Plot the actual and predicted values for the stacked ensemble model
+figure;
+plot(test_out, 'LineWidth', 2, 'Color', 'blue');
+hold on;
+plot(predicted_out_stacked, 'LineWidth', 2, 'Color', 'yellow');
+xlabel('Sample index');
+ylabel('Target value');
+title('Stacked Ensemble: Actual vs. Predicted');
+legend('Actual', 'Predicted');
+
