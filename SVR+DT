@@ -1,0 +1,277 @@
+>> % Split the data into training and testing sets
+train_size = round(size(Total_in, 1) * 0.8);
+train_in = Total_in(1:train_size, :);
+train_out = Total_out(1:train_size, 1);
+test_in = Total_in(train_size+1:end, :);
+test_out = Total_out(train_size+1:end, 1);
+% Set hyperparameters to try
+epsilons = [0.01, 0.1, 1];
+kernel_scales = [0.1, 1, 10];
+box_constraints = [0.1, 1, 10, 100];
+
+% Set k-fold cross-validation parameters
+num_folds = 5;
+cv = cvpartition(size(train_in, 1), 'KFold', num_folds);
+
+best_mae_svr = Inf;
+for epsilon = epsilons
+for kernel_scale = kernel_scales
+for box_constraint = box_constraints
+mae_svr_temp_sum = 0;
+for i = 1:num_folds
+train_in_fold = train_in(cv.training(i), :);
+train_out_fold = train_out(cv.training(i));
+test_in_fold = train_in(cv.test(i), :);
+test_out_fold = train_out(cv.test(i));
+svr_model_temp = fitrsvm(train_in_fold, train_out_fold, 'Epsilon', epsilon, 'KernelScale', kernel_scale, 'BoxConstraint', box_constraint);
+            svr_predictions_temp = predict(svr_model_temp, test_in_fold);
+            mae_svr_temp = mean(abs(test_out_fold - svr_predictions_temp));
+            mae_svr_temp_sum = mae_svr_temp_sum + mae_svr_temp;
+        end
+        mae_svr_temp_avg = mae_svr_temp_sum / num_folds;
+        if mae_svr_temp_avg < best_mae_svr
+            best_mae_svr = mae_svr_temp_avg;
+            best_hyperparams_svr = [epsilon, kernel_scale, box_constraint];
+        end
+    end
+end
+end
+
+% Train the decision tree
+tree = fitrtree(train_in, train_out);
+
+% Make predictions on the test data using the decision tree
+predicted_out_tree = predict(tree, test_in);
+
+% Evaluate the performance of the decision tree
+mse_tree = mean((test_out - predicted_out_tree).^2);
+mae_tree = mean(abs(test_out - predicted_out_tree));
+
+% Train the final SVR model with the best hyperparameters
+best_epsilon = best_hyperparams_svr(1);
+best_kernel_scale = best_hyperparams_svr(2);
+best_box_constraint = best_hyperparams_svr(3);
+svr_model = fitrsvm(train_in, train_out, 'Epsilon', best_epsilon, 'KernelScale', best_kernel_scale, 'BoxConstraint', best_box_constraint);
+
+% Make predictions on the test data using the best SVR model
+svr_predictions = predict(svr_model, test_in);
+
+% Evaluate the performance of the SVR model
+mse_svr = mean((test_out - svr_predictions).^2);
+mae_svr = mean(abs(test_out - svr_predictions));
+
+% Bagging Ensemble
+ens_bagging = fitensemble([predicted_out_tree svr_predictions], test_out, 'Bag', 200, 'Tree', 'Type', 'Regression');
+predicted_out_bagging = predict(ens_bagging, [predicted_out_tree svr_predictions]);
+mse_bagging = mean((test_out - predicted_out_bagging).^2);
+mae_bagging = mean(abs(test_out - predicted_out_bagging));
+
+% Boosting Ensemble
+ens_boosting = fitensemble([predicted_out_tree svr_predictions], test_out, 'LSBoost', 200, 'Tree', 'Type', 'Regression');
+predicted_out_boosting = predict(ens_boosting, [predicted_out_tree svr_predictions]);
+mse_boosting = mean((test_out - predicted_out_boosting).^2);
+mae_boosting = mean(abs(test_out - predicted_out_boosting));
+
+% Weighted Average Ensemble
+wa_ens = (predicted_out_tree * 0.5) + (svr_predictions * 0.5);
+mse_wa_ens = mean((test_out - wa_ens).^2);
+mae_wa_ens = mean(abs(test_out - wa_ens));
+mape_wa_ens = mean(abs((test_out - wa_ens) ./ test_out)) * 100;
+
+% Train a linear regression model to combine the predictions
+stacked_data = [predicted_out_tree, svr_predictions];
+stacked_model = fitlm(stacked_data, test_out);
+predicted_out_stacked = predict(stacked_model, stacked_data);
+mse_stacked = mean((test_out - predicted_out_stacked).^2);
+mae_stacked = mean(abs(test_out - predicted_out_stacked));
+
+% Calculate MAPE
+mape_tree = mean(abs((test_out - predicted_out_tree) ./ test_out)) * 100;
+mape_svr = mean(abs((test_out - svr_predictions) ./ test_out)) * 100;
+mape_bagging = mean(abs((test_out - predicted_out_bagging) ./ test_out)) * 100;
+mape_boosting = mean(abs((test_out - predicted_out_boosting) ./ test_out)) * 100;
+mape_wa_ens = mean(abs((test_out - wa_ens) ./ test_out)) * 100;
+mape_stacked = mean(abs((test_out - predicted_out_stacked) ./ test_out)) * 100;
+
+% Display the performance indicators
+fprintf('Decision Tree Mean Squared Error: %.6f\n', mse_tree);
+fprintf('Decision Tree Mean Absolute Error: %.6f\n', mae_tree);
+fprintf('Decision Tree Mean Absolute Percentage Error: %.6f%%\n', mape_tree);
+fprintf('SVR Mean Squared Error: %.6f\n', mse_svr);
+fprintf('SVR Mean Absolute Error: %.6f\n', mae_svr);
+fprintf('SVR Mean Absolute Percentage Error: %.6f%%\n', mape_svr);
+fprintf('Bagging Ensemble Model Mean Squared Error: %.6f\n', mse_bagging);
+fprintf('Bagging Ensemble Model Mean Absolute Error: %.6f\n', mae_bagging);
+fprintf('Bagging Ensemble Model Mean Absolute Percentage Error: %.6f%%\n', mape_bagging);
+fprintf('Boosting Ensemble Model Mean Squared Error: %.6f\n', mse_boosting);
+fprintf('Boosting Ensemble Model Mean Absolute Error: %.6f\n', mae_boosting);
+fprintf('Boosting Ensemble Model Mean Absolute Percentage Error: %.6f%%\n', mape_boosting);
+fprintf('Weighted Average Ensemble Model Mean Squared Error: %.6f\n', mse_wa_ens);
+fprintf('Weighted Average Ensemble Model Mean Absolute Error: %.6f\n', mae_wa_ens);
+fprintf('Weighted Average Ensemble Model Mean Absolute Percentage Error: %.6f%%\n', mape_wa_ens);
+fprintf('Stacked Ensemble Model Mean Squared Error: %.6f\n', mse_stacked);
+fprintf('Stacked Ensemble Model Mean Absolute Error:%.6f\n', mae_stacked);
+fprintf('Stacked Ensemble Model Mean Absolute Percentage Error: %.6f%%\n', mape_stacked);
+
+% Plot the decision tree
+view(tree, 'Mode', 'graph');
+
+% Plot the SVR model
+figure;
+plot(test_out, 'b');
+hold on;
+plot(svr_predictions, 'r');
+legend('True Values', 'Predicted Values');
+title('Support Vector Regression Model Predictions');
+xlabel('Observation');
+ylabel('Target Value');
+
+% Plot the bagging ensemble model
+figure;
+plot(test_out, 'b');
+hold on;
+plot(predicted_out_bagging, 'r');
+legend('True Values', 'Predicted Values');
+title('Bagging Ensemble Model Predictions');
+xlabel('Observation');
+ylabel('Target Value');
+
+% Plot the boosting ensemble model
+figure;
+plot(test_out, 'b');
+hold on;
+plot(predicted_out_boosting, 'r');
+legend('True Values', 'Predicted Values');
+title('Boosting Ensemble Model Predictions');
+xlabel('Observation');
+ylabel('Target Value');
+
+% Plot the weighted average ensemble model
+figure;
+plot(test_out, 'b');
+hold on;
+plot(wa_ens, 'r');
+legend('True Values', 'Predicted Values');
+title('Weighted Average Ensemble Model Predictions');
+xlabel('Observation');
+ylabel('Target Value');
+
+% Plot the stacked ensemble model
+figure;
+plot(test_out, 'b');
+hold on;
+plot(predicted_out_stacked, 'r');
+legend('True Values', 'Predicted Values');
+title('Stacked Ensemble Model Predictions');
+xlabel('Observation');
+ylabel('Target Value');
+
+% Remove the code for training and evaluating the SVR model
+% Split the data into training and testing sets
+train_size = round(size(Total_in, 1) * 0.8);
+train_in = Total_in(1:train_size, :);
+train_out = Total_out(1:train_size, 1);
+test_in = Total_in(train_size+1:end, :);
+test_out = Total_out(train_size+1:end, 1);
+
+% Train the decision tree
+tree = fitrtree(train_in, train_out);
+
+% Make predictions on the test data
+predicted_out_tree = predict(tree, test_in);
+
+% Evaluate the performance of the decision tree
+mse_tree = mean((test_out - predicted_out_tree).^2);
+mae_tree = mean(abs(test_out - predicted_out_tree));
+
+% Bagging Ensemble
+ens_bagging = fitensemble([predicted_out_tree, svr_predictions], test_out, 'Bag', 200, 'Tree', 'Type', 'Regression');
+predicted_out_bagging = predict(ens_bagging, [predicted_out_tree, svr_predictions]);
+mse_bagging = mean((test_out - predicted_out_bagging).^2);
+mae_bagging = mean(abs(test_out - predicted_out_bagging));
+
+% Boosting Ensemble
+ens_boosting = fitensemble([predicted_out_tree, svr_predictions], test_out, 'LSBoost', 200, 'Tree', 'Type', 'Regression');
+predicted_out_boosting = predict(ens_boosting, [predicted_out_tree, svr_predictions]);
+mse_boosting = mean((test_out - predicted_out_boosting).^2);
+mae_boosting = mean(abs(test_out - predicted_out_boosting));
+
+% Weighted Average Ensemble
+wa_ens = (predicted_out_tree * 0.5) + (svr_predictions * 0.5);
+mse_wa_ens = mean((test_out - wa_ens).^2);
+mae_wa_ens = mean(abs(test_out - wa_ens));
+mape_wa_ens = mean(abs((test_out - wa_ens) ./ test_out)) * 100;
+
+% Train a linear regression model to combine the predictions
+stacked_data = [predicted_out_tree, svr_predictions];
+stacked_model = fitlm(stacked_data, test_out);
+predicted_out_stacked = predict(stacked_model, stacked_data);
+mse_stacked = mean((test_out - predicted_out_stacked).^2);
+mae_stacked = mean(abs(test_out - predicted_out_stacked));
+% Calculate MAPE
+mape_tree = mean(abs((test_out - predicted_out_tree) ./ test_out)) * 100;
+mape_bagging = mean(abs((test_out - predicted_out_bagging) ./ test_out)) * 100;
+mape_boosting = mean(abs((test_out - predicted_out_boosting) ./ test_out)) * 100;
+mape_wa_ens = mean(abs((test_out - wa_ens) ./ test_out)) * 100;
+mape_stacked = mean(abs((test_out - predicted_out_stacked) ./ test_out)) * 100;
+
+% Display the performance indicators
+fprintf('Decision Tree Mean Squared Error: %.6f\n', mse_tree);
+fprintf('Decision Tree Mean Absolute Error: %.6f\n', mae_tree);
+fprintf('Decision Tree Mean Absolute Percentage Error: %.6f%%\n', mape_tree);
+fprintf('Bagging Ensemble Model Mean Squared Error: %.6f\n', mse_bagging);
+fprintf('Bagging Ensemble Model Mean Absolute Error: %.6f\n', mae_bagging);
+fprintf('Bagging Ensemble Model Mean Absolute Percentage Error: %.6f%%\n', mape_bagging);
+fprintf('Boosting Ensemble Model Mean Squared Error: %.6f\n', mse_boosting);
+fprintf('Boosting Ensemble Model Mean Absolute Error: %.6f\n', mae_boosting);
+fprintf('Boosting Ensemble Model Mean Absolute Percentage Error: %.6f%%\n', mape_boosting);
+fprintf('Weighted Average Ensemble Model Mean Squared Error: %.6f\n', mse_wa_ens);
+fprintf('Weighted Average Ensemble Model Mean Absolute Error: %.6f\n', mae_wa_ens);
+fprintf('Weighted Average Ensemble Model Mean Absolute Percentage Error: %.6f%%\n', mape_wa_ens);
+fprintf('Stacked Ensemble Model Mean Squared Error: %.6f\n', mse_stacked);
+fprintf('Stacked Ensemble Model Mean Absolute Error:%.6f\n', mae_stacked);
+fprintf('Stacked Ensemble Model Mean Absolute Percentage Error: %.6f%%\n', mape_stacked);
+
+% Plot the decision tree
+view(tree, 'Mode', 'graph');
+
+% Plot the bagging ensemble model
+figure;
+plot(test_out, 'b');
+hold on;
+plot(predicted_out_bagging, 'r');
+legend('True Values', 'Predicted Values');
+title('Bagging Ensemble Model Predictions');
+xlabel('Observation');
+ylabel('Target Value');
+
+% Plot the boosting ensemble model
+figure;
+plot(test_out, 'b');
+hold on;
+plot(predicted_out_boosting, 'r');
+legend('True Values', 'Predicted Values');
+title('Boosting Ensemble Model Predictions');
+xlabel('Observation');
+ylabel('Target Value');
+
+% Plot the weighted average ensemble model
+figure;
+plot(test_out, 'b');
+hold on;
+plot(wa_ens, 'r');
+legend('True Values', 'Predicted Values');
+title('Weighted Average Ensemble Model Predictions');
+xlabel('Observation');
+ylabel('Target Value');
+
+% Plot the stacked ensemble model
+figure;
+plot(test_out, 'b');
+hold on;
+plot(predicted_out_stacked, 'r');
+legend('True Values', 'Predicted Values');
+title('Stacked Ensemble Model Predictions');
+xlabel('Observation');
+ylabel('Target Value'); 
+ 
