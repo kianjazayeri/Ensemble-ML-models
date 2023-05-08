@@ -1,0 +1,169 @@
+>> % Convert the response variable to double
+response = double(Total_out(:, 1));
+
+% Split the data into training and testing sets
+train_size = round(size(Total_in, 1) * 0.8);
+train_in = Total_in(1:train_size, :);
+train_out = response(1:train_size, :);
+test_in = Total_in(train_size+1:end, :);
+test_out = response(train_size+1:end, :);
+
+% Train the neural network
+net = feedforwardnet([10 5]); % 2 hidden layers with 10 and 5 neurons, respectively
+net.trainFcn = 'trainlm'; % Levenberg-Marquardt algorithm
+net.trainParam.epochs = 1000; % number of epochs to train for
+net.divideFcn = 'dividerand'; % divide the data randomly into training, validation, and testing sets
+net.divideParam.trainRatio = 0.7; % 70% of the data for training
+net.divideParam.valRatio = 0.15; % 15% of the data for validation
+net.divideParam.testRatio = 0.15; % 15% of the data for testing
+[net, tr] = train(net, train_in', train_out');
+
+% Evaluate the performance of the neural network
+predicted_out_nn = net(test_in');
+mse_nn = mean((test_out' - predicted_out_nn).^2);
+mae_nn = mean(abs(test_out' - predicted_out_nn));
+
+% Set random forest parameters
+num_trees = 50;
+
+% Set hyperparameters to try
+min_leaf_sizes = [1, 5, 10, 20];
+max_num_splits = [10, 20, 50, 100];
+num_vars_to_sample = [5, 10, 20, 50];
+
+% Set k-fold cross-validation parameters
+num_folds = 5;
+cv = cvpartition(size(train_in, 1), 'KFold', num_folds);
+
+best_mae = Inf;
+for min_leaf_size = min_leaf_sizes
+for max_num_split = max_num_splits
+for num_vars = num_vars_to_sample
+mae_rf_temp_sum = 0;
+for i = 1:num_folds
+train_in_fold = train_in(cv.training(i), :);
+train_out_fold = train_out(cv.training(i));
+test_in_fold = train_in(cv.test(i), :);
+test_out_fold = train_out(cv.test(i));
+Mdl_rf_temp = TreeBagger(num_trees, train_in_fold, train_out_fold, 'Method', 'regression', ...
+                'MinLeafSize', min_leaf_size, 'MaxNumSplits', max_num_split, ...
+                'NumVariablesToSample', num_vars);
+            predicted_out_rf_temp = predict(Mdl_rf_temp, test_in_fold);
+            mae_rf_temp = mean(abs(test_out_fold - predicted_out_rf_temp));
+            mae_rf_temp_sum = mae_rf_temp_sum + mae_rf_temp;
+        end
+        mae_rf_temp_avg = mae_rf_temp_sum / num_folds;
+        if mae_rf_temp_avg < best_mae
+            best_mae = mae_rf_temp_avg;
+            best_hyperparams = [min_leaf_size, max_num_split, num_vars];
+        end
+    end
+end
+end
+
+% Train the final random forest model with the best hyperparameters
+best_min_leaf_size = best_hyperparams(1);
+best_max_num_split = best_hyperparams(2);
+best_num_vars = best_hyperparams(3);
+% Train the final random forest model with the best hyperparameters
+best_min_leaf_size = best_hyperparams(1);
+best_max_num_split = best_hyperparams(2);
+best_num_vars = best_hyperparams(3);
+
+Mdl_rf = TreeBagger(num_trees, train_in, train_out, 'Method', 'regression', ...
+'MinLeafSize', best_min_leaf_size, 'MaxNumSplits', best_max_num_split, ...
+'NumVariablesToSample', best_num_vars);
+
+% Make predictions on the test data using the best random forest model
+predicted_out_rf = predict(Mdl_rf, test_in);
+
+% Evaluate the performance of the random forest model
+mse_rf = mean((test_out - predicted_out_rf).^2);
+mae_rf = mean(abs(test_out - predicted_out_rf));
+
+% Use ensemble methods to combine the predictions
+predicted_out_combined = horzcat(predicted_out_nn', predicted_out_rf);
+ens_bagging = fitensemble(predicted_out_combined, test_out, 'Bag', 200, 'Tree', 'Type', 'Regression');
+predicted_out_bagging = predict(ens_bagging, predicted_out_combined);
+mse_bagging = mean((test_out - predicted_out_bagging).^2);
+mae_bagging = mean(abs(test_out - predicted_out_bagging));
+
+ens_boosting = fitensemble(predicted_out_combined, test_out, 'LSBoost', 200, 'Tree', 'Type', 'Regression');
+predicted_out_boosting = predict(ens_boosting, predicted_out_combined);
+mse_boosting = mean((test_out - predicted_out_boosting).^2);
+mae_boosting = mean(abs(test_out - predicted_out_boosting));
+
+wa_ens = (predicted_out_nn' * 0.5) + (predicted_out_rf * 0.2) + (predicted_out_boosting * 0.1) + (predicted_out_bagging * 0.1);
+mse_wa_ens = mean((test_out - wa_ens).^2);
+mae_wa_ens = mean(abs(test_out - wa_ens));
+
+stacked_data = [predicted_out_nn', predicted_out_rf, predicted_out_boosting, predicted_out_bagging];
+stacked_model = fitlm(stacked_data, test_out);
+predicted_out_stacked = predict(stacked_model, stacked_data);
+mse_stacked = mean((test_out - predicted_out_stacked).^2);
+mae_stacked = mean(abs(test_out - predicted_out_stacked));
+
+mape_nn = mean(abs((test_out - predicted_out_nn') ./ test_out)) * 100;
+mape_rf = mean(abs((test_out - predicted_out_rf) ./ test_out)) * 100;
+mape_bagging = mean(abs((test_out - predicted_out_bagging) ./ test_out)) * 100;
+mape_boosting = mean(abs((test_out - predicted_out_boosting) ./ test_out)) * 100;
+mape_wa_ens = mean(abs((test_out - wa_ens) ./ test_out)) * 100;
+mape_stacked = mean(abs((test_out - predicted_out_stacked) ./ test_out)) * 100;
+
+% Display the performance indicators
+fprintf('Neural Network Mean Squared Error: %.6f\n', mse_nn);
+fprintf('Neural Network Mean Absolute Error: %.6f\n', mae_nn);
+fprintf('Neural Network Mean Absolute Percentage Error: %.6f%%\n', mape_nn);
+fprintf('Random Forest Mean Squared Error: %.6f\n', mse_rf);
+fprintf('Random Forest Mean Absolute Error: %.6f\n', mae_rf);
+fprintf('Random Forest Mean Absolute Percentage Error: %.6f%%\n', mape_rf);
+fprintf('Bagging Ensemble Model Mean Squared Error: %.6f\n', mse_bagging);
+fprintf('Bagging Ensemble Model Mean Absolute Error: %.6f\n', mae_bagging);
+fprintf('Bagging Ensemble Model Mean Absolute Percentage Error: %.6f%%\n', mape_bagging);
+fprintf('Boosting Ensemble Model Mean Squared Error: %.6f\n', mse_boosting);
+fprintf('Boosting Ensemble Model Mean Absolute Error: %.6f\n', mae_boosting);
+fprintf('Boosting Ensemble Model Mean Absolute Percentage Error: %.6f%%\n', mape_boosting);
+fprintf('Weighted Average Ensemble Model Mean Squared Error: %.6f\n', mse_wa_ens);
+fprintf('Weighted Average Ensemble Model Mean Absolute Error: %.6f\n', mae_wa_ens);
+fprintf('Weighted Average Ensemble Model Mean Absolute Percentage Error: %.6f%%\n', mape_wa_ens);
+fprintf('Stacked Ensemble Model Mean Squared Error: %.6f\n', mse_stacked);
+fprintf('Stacked Ensemble Model Mean Absolute Error:%.6f\n', mae_stacked);
+fprintf('Stacked Ensemble Model Mean Absolute Percentage Error: %.6f%%\n', mape_stacked);
+
+% Plot the actual vs. predicted values for each model
+figure;
+scatter(test_out, predicted_out_nn');
+xlabel('Actual Output');
+ylabel('Predicted Output');
+title('Neural Network');
+
+figure;
+scatter(test_out, predicted_out_rf);
+xlabel('Actual Output');
+ylabel('Predicted Output');
+title('Modified Random Forest');
+
+figure;
+scatter(test_out, predicted_out_bagging);
+xlabel('Actual Output');
+ylabel('Predicted Output');
+title('Bagging Ensemble Model');
+
+figure;
+scatter(test_out, predicted_out_boosting);
+xlabel('Actual Output');
+ylabel('Predicted Output');
+title('Boosting Ensemble Model');
+
+figure;
+scatter(test_out, wa_ens);
+xlabel('Actual Output');
+ylabel('Predicted Output');
+title('Weighted Average Ensemble Model');
+
+figure;
+scatter(test_out, predicted_out_stacked);
+xlabel('Actual Output');
+ylabel('Predicted Output');
+title('Stacked Ensemble Model');
+ 
